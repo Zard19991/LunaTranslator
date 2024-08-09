@@ -1,5 +1,5 @@
 from qtsymbols import *
-import time, functools, threading, os, sys, importlib, shutil, uuid
+import time, functools, threading, os, importlib, shutil, uuid
 from traceback import print_exc
 import windows, qtawesome, gobject, winsharedutils
 from myutils.wrapper import threader, trypass
@@ -18,7 +18,13 @@ from myutils.utils import (
     makehtml,
     loadpostsettingwindowmethod_maybe,
 )
-from myutils.hwnd import mouseselectwindow, grabwindow, getExeIcon, getpidexe, getcurrexe
+from myutils.hwnd import (
+    mouseselectwindow,
+    grabwindow,
+    getExeIcon,
+    getpidexe,
+    getcurrexe,
+)
 from gui.setting_about import doupdate
 from gui.dialog_memory import dialog_memory
 from gui.textbrowser import Textbrowser
@@ -236,13 +242,22 @@ class QUnFrameWindow(resizableframeless):
     ocr_once_signal = pyqtSignal()
     resizesignal = pyqtSignal(QSize)
     move_signal = pyqtSignal(QPoint)
+    closesignal = pyqtSignal()
 
     @threader
     def tracewindowposthread(self):
         lastpos = None
+        tracepos = None
+        tracehwnd = None
+
+        def _castqp(rect):
+            return QPoint(
+                int(rect[0] / self.devicePixelRatioF()),
+                int(rect[1] / self.devicePixelRatioF()),
+            )
+
         while True:
-            time.sleep(0.05)
-            # 不能太快了，不然有int取整累计误差。其实应该记录起始窗口位置，然后计算与起始的dxdy，而不是与上一次的dxdy，但这太麻烦了
+            time.sleep(0.01)
             if self._move_drag:
                 lastpos = None
                 continue
@@ -251,29 +266,33 @@ class QUnFrameWindow(resizableframeless):
                 continue
             try:
                 hwnd = gobject.baseobject.textsource.hwnd
+                if hwnd != tracehwnd:
+                    lastpos = None
             except:
                 lastpos = None
                 continue
             rect = windows.GetWindowRect(hwnd)
+            tracehwnd = hwnd
             if not rect:
                 lastpos = None
                 continue
+            rect = _castqp(rect)
             if not lastpos:
                 lastpos = rect
+                tracepos = self.pos()
+                try:
+                    gobject.baseobject.textsource.starttrace(rect)
+                except:
+                    pass
                 continue
-            rate = self.devicePixelRatioF()
 
-            dx, dy = int((rect[0] - lastpos[0]) / rate), int(
-                (rect[1] - lastpos[1]) / rate
-            )
-            if dx == 0 and dy == 0:
+            if rect == QPoint(0, 0):
                 continue
             try:
-                gobject.baseobject.textsource.moveui(dx, dy)
+                gobject.baseobject.textsource.traceoffset(rect)
             except:
-                pass
-            self.move_signal.emit(QPoint(self.x() + dx, self.y() + dy))
-            lastpos = rect
+                print_exc()
+            self.move_signal.emit(tracepos - lastpos + rect)
 
     def showres(self, kwargs):  # name,color,res,onlytrans,iter_context):
         try:
@@ -435,11 +454,6 @@ class QUnFrameWindow(resizableframeless):
             self.show_()
         else:
             self.hide_()
-
-    def leftclicktray(self, reason):
-        # 鼠标左键点击
-        if reason == QSystemTrayIcon.Trigger:
-            self.showhideui()
 
     def refreshtoolicon(self):
         self.titlebar.setFixedHeight(int(globalconfig["buttonsize"] * 1.5))
@@ -700,29 +714,16 @@ class QUnFrameWindow(resizableframeless):
         self.setontopthread()
 
     def canceltop(self):
-        windows.SetWindowPos(
-            self.winid,
-            windows.HWND_NOTOPMOST,
-            0,
-            0,
-            0,
-            0,
-            windows.SWP_NOACTIVATE | windows.SWP_NOSIZE | windows.SWP_NOMOVE,
-        )
-        HWNDStyleEx = windows.GetWindowLong(self.winid, windows.GWL_EXSTYLE)
-        windows.SetWindowLong(
-            self.winid, windows.GWL_EXSTYLE, HWNDStyleEx & ~windows.WS_EX_TOPMOST
-        )
-
-        windows.SetWindowPos(
-            self.winid,
-            windows.GetForegroundWindow(),
-            0,
-            0,
-            0,
-            0,
-            windows.SWP_NOACTIVATE | windows.SWP_NOSIZE | windows.SWP_NOMOVE,
-        )
+        if self.istopmost():
+            windows.SetWindowPos(
+                self.winid,
+                windows.HWND_NOTOPMOST,
+                0,
+                0,
+                0,
+                0,
+                windows.SWP_NOACTIVATE | windows.SWP_NOSIZE | windows.SWP_NOMOVE,
+            )
 
     def istopmost(self):
         return bool(
@@ -731,12 +732,6 @@ class QUnFrameWindow(resizableframeless):
         )
 
     def settop(self):
-        if not self.istopmost():
-            self.canceltop()
-        HWNDStyleEx = windows.GetWindowLong(self.winid, windows.GWL_EXSTYLE)
-        windows.SetWindowLong(
-            self.winid, windows.GWL_EXSTYLE, HWNDStyleEx | windows.WS_EX_TOPMOST
-        )
         windows.SetWindowPos(
             self.winid,
             windows.HWND_TOPMOST,
@@ -749,22 +744,25 @@ class QUnFrameWindow(resizableframeless):
 
     @threader
     def setontopthread(self):
-        self.settop()
-        while globalconfig["keepontop"]:
 
-            try:
-                hwnd = windows.GetForegroundWindow()
-                pid = windows.GetWindowThreadProcessId(hwnd)
-                if pid == os.getpid():
-                    pass
-                elif globalconfig["focusnotop"] and self.thistimenotsetop:
-                    pass
-                else:
-                    self.settop()
-            except:
-                print_exc()
-            time.sleep(0.5)
-        self.canceltop()
+        with self.setontopthread_lock:
+            if not globalconfig["keepontop"]:
+                return self.canceltop()
+            self.settop()
+            while globalconfig["keepontop"]:
+
+                try:
+                    hwnd = windows.GetForegroundWindow()
+                    pid = windows.GetWindowThreadProcessId(hwnd)
+                    if pid == os.getpid():
+                        pass
+                    elif globalconfig["focusnotop"] and self.thistimenotsetop:
+                        pass
+                    else:
+                        self.settop()
+                except:
+                    print_exc()
+                time.sleep(0.5)
 
     def seteffect(self):
         if globalconfig["WindowEffect"] == 0:
@@ -790,6 +788,7 @@ class QUnFrameWindow(resizableframeless):
         self.processismuteed = False
         self.thistimenotsetop = False
         self.isbindedwindow = False
+        self.setontopthread_lock = threading.Lock()
 
     def displayglobaltooltip_f(self, string):
         QToolTip.showText(QCursor.pos(), string, self)
@@ -837,6 +836,7 @@ class QUnFrameWindow(resizableframeless):
         self.toolbarhidedelaysignal.connect(self.toolbarhidedelay)
         self.resizesignal.connect(self.resize)
         self.move_signal.connect(self.move)
+        self.closesignal.connect(self.close)
 
     def __init__(self):
 
@@ -1226,19 +1226,24 @@ class QUnFrameWindow(resizableframeless):
             pass
 
     def closeEvent(self, a0) -> None:
-        if self.fullscreenmanager:
-            self.fullscreenmanager.endX()
-        gobject.baseobject.isrunning = False
-        self.hide()
+        try:
+            if self.fullscreenmanager:
+                self.fullscreenmanager.endX()
+            gobject.baseobject.isrunning = False
+            self.hide()
 
-        if gobject.baseobject.textsource:
+            if gobject.baseobject.textsource:
 
-            gobject.baseobject.textsource = None
+                gobject.baseobject.textsource = None
+            endsubprocs()
+            gobject.baseobject.destroytray()
+            handle = windows.CreateMutex(False, "LUNASAVECONFIGUPDATE")
+            if windows.GetLastError() != windows.ERROR_ALREADY_EXISTS:
+                saveallconfig()
+                self.tryremoveuseless()
+                doupdate()
+                windows.CloseHandle(handle)
+            os._exit(0)
 
-        saveallconfig()
-
-        endsubprocs()
-        self.tryremoveuseless()
-        gobject.baseobject.destroytray()
-        doupdate()
-        os._exit(0)
+        except:
+            print_exc()

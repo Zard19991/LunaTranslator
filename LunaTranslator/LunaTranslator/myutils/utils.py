@@ -423,34 +423,42 @@ def minmaxmoveobservefunc(self):
     def win_event_callback(
         hWinEventHook, event, hwnd, idObject, idChild, dwEventThread, dwmsEventTime
     ):
+
         try:
             if gobject.baseobject.textsource is None:
                 return
-            if gobject.baseobject.textsource.hwnd == 0:
+            if not gobject.baseobject.textsource.hwnd:
+                return
+            if not gobject.baseobject.textsource.pids:
+                return
+            p_pids = gobject.baseobject.textsource.pids
+            _focusp = windows.GetWindowThreadProcessId(hwnd)
+            if event != windows.EVENT_SYSTEM_FOREGROUND:
+                return
+            if not (globalconfig["keepontop"] and globalconfig["focusnotop"]):
+                return
+            if _focusp == os.getpid():
                 return
 
-            _focusp = windows.GetWindowThreadProcessId(hwnd)
-            if event == windows.EVENT_SYSTEM_FOREGROUND:
-                if globalconfig["keepontop"] and globalconfig["focusnotop"]:
-                    if _focusp == os.getpid():
-                        pass
-                    else:
-                        hwndmagpie = windows.FindWindow(
-                            "Window_Magpie_967EB565-6F73-4E94-AE53-00CC42592A22", None
-                        )
-                        hwndlossless = windows.FindWindow("LosslessScaling", None)
-                        if (
-                            len(gobject.baseobject.textsource.pids) == 0
-                            or _focusp in gobject.baseobject.textsource.pids
-                            or hwnd == hwndmagpie
-                            or hwnd == hwndlossless
-                        ):
-                            gobject.baseobject.translation_ui.thistimenotsetop = False
-                            gobject.baseobject.translation_ui.settop()
-                        else:
-                            gobject.baseobject.translation_ui.thistimenotsetop = True
-                            if gobject.baseobject.translation_ui.istopmost():
-                                gobject.baseobject.translation_ui.canceltop()
+            if windows.FindWindow(
+                "Window_Magpie_967EB565-6F73-4E94-AE53-00CC42592A22", None
+            ):
+                return
+            if _focusp in p_pids:
+                gobject.baseobject.translation_ui.thistimenotsetop = False
+                gobject.baseobject.translation_ui.settop()
+            else:
+                gobject.baseobject.translation_ui.thistimenotsetop = True
+                gobject.baseobject.translation_ui.canceltop()
+                windows.SetWindowPos(
+                    hwnd,
+                    windows.HWND_TOP,
+                    0,
+                    0,
+                    0,
+                    0,
+                    windows.SWP_NOACTIVATE | windows.SWP_NOSIZE | windows.SWP_NOMOVE,
+                )
 
         except:
             print_exc()
