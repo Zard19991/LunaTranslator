@@ -2,7 +2,7 @@ from qtsymbols import *
 import json, time, functools, os, base64, uuid
 from urllib.parse import quote
 from traceback import print_exc
-import qtawesome, requests, gobject, windows, winsharedutils
+import qtawesome, requests, gobject, windows
 import myutils.ankiconnect as anki
 from myutils.hwnd import grabwindow
 from myutils.config import globalconfig, static_data, _TR
@@ -495,6 +495,29 @@ class AnkiWindow(QWidget):
             clearbtn.clicked.connect(lambda: target.clear())
             return clearbtn
 
+        class ctrlbedit(FQPlainTextEdit):
+            def keyPressEvent(self, e):
+                if (
+                    e.modifiers() == Qt.KeyboardModifier.ControlModifier
+                    and e.key() == Qt.Key.Key_B
+                ):
+                    cursor = self.textCursor()
+                    if cursor.hasSelection():
+                        selected_text = cursor.selectedText()
+                        new_text = "<b>{}</b>".format(selected_text)
+
+                        start = cursor.selectionStart()
+
+                        cursor.beginEditBlock()
+                        cursor.insertText(new_text)
+                        cursor.endEditBlock()
+                        cursor.setPosition(start, QTextCursor.MoveMode.MoveAnchor)
+                        cursor.setPosition(
+                            start + len(new_text), QTextCursor.MoveMode.KeepAnchor
+                        )
+                        self.setTextCursor(cursor)
+                return super().keyPressEvent(e)
+
         self.audiopath = QLineEdit()
         self.audiopath.setReadOnly(True)
         self.audiopath_sentence = QLineEdit()
@@ -503,8 +526,8 @@ class AnkiWindow(QWidget):
         self.editpath.setReadOnly(True)
         self.viewimagelabel = pixmapviewer()
         self.editpath.textChanged.connect(self.wrappedpixmap)
-        self.example = FQPlainTextEdit()
-        self.zhuyinedit = FQPlainTextEdit()
+        self.example = ctrlbedit()
+        self.zhuyinedit = ctrlbedit()
         self.wordedit = FQLineEdit()
         self.wordedit.textChanged.connect(self.wordedit_t)
         self.example.hiras = None
@@ -513,7 +536,7 @@ class AnkiWindow(QWidget):
             self.example.hiras = None
 
         self.example.textChanged.connect(__)
-        self.remarks = FQPlainTextEdit()
+        self.remarks = ctrlbedit()
         recordbtn1 = statusbutton(icons=["fa.microphone", "fa.stop"])
         recordbtn1.clicked.connect(
             functools.partial(self.startorendrecord, 1, self.audiopath)
@@ -955,7 +978,7 @@ class showdiction(QWidget):
         if action == search:
             self.model.onDoubleClicked(idx)
         elif copy == action:
-            winsharedutils.clipboard_set(item.text())
+            gobject.baseobject.clipboardhelper.setText.emit(item.text())
         elif action == label:
             if not idx.data(isLabeleddWord):
                 item.setData(True, isLabeleddWord)
@@ -1242,10 +1265,10 @@ class searchwordW(closeashidewindow):
             functools.partial(globalconfig.__setitem__, "ZoomFactor")
         )
         self.textOutput.bind(
-            "mdict_entry_call", lambda word: self.search_word.emit(word, False)
+            "luna_search_word", lambda word: self.search_word.emit(word, False)
         )
         self.textOutput.bind(
-            "mdict_audio_call",
+            "luna_audio_play_b64",
             lambda b64: gobject.baseobject.audioplayer.play(
                 base64.b64decode(b64.encode()), force=True
             ),

@@ -318,13 +318,13 @@ class TableViewW(QTableView):
             csv_writer.writerow(row)
         csv_str = output.getvalue()
         output.close()
-        winsharedutils.clipboard_set(csv_str)
+        gobject.baseobject.clipboardhelper.setText.emit(csv_str)
 
     def pastetable(self):
         current = self.currentIndex()
         if not current.isValid():
             return
-        string = winsharedutils.clipboard_get()
+        string = QApplication.clipboard().text("plain")[0]
         try:
             csv_file = io.StringIO(string)
             csv_reader = csv.reader(csv_file, delimiter="\t")
@@ -1397,7 +1397,6 @@ class QWebWrap(abstractwebview):
 
 
 class mshtmlWidget(abstractwebview):
-    CommandBase = 10086
 
     def eval(self, js):
         winsharedutils.html_eval(self.browser, js)
@@ -1422,7 +1421,7 @@ class mshtmlWidget(abstractwebview):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.callbacks = {}
+        self.callbacks = []
         self.bindfs = []
         iswine = checkisusingwine()
         if iswine or (winsharedutils.html_version() < 10001):  # ie10之前，sethtml会乱码
@@ -1434,37 +1433,25 @@ class mshtmlWidget(abstractwebview):
         t.timeout.connect(self.__getcurrent)
         t.timeout.emit()
         t.start()
-        self.add_menu(0, _TR("复制"), winsharedutils.clipboard_set)
+        self.add_menu(0, _TR("复制"), gobject.baseobject.clipboardhelper.setText.emit)
         self.add_menu(0, None, lambda: 1)
 
-        self.wndproc = windows.WNDPROCTYPE(
-            functools.partial(
-                self.extrahandle,
-                windows.GetWindowLongPtr(int(self.winId()), windows.GWLP_WNDPROC),
-            )
-        )
-        windows.SetWindowLongPtr(int(self.winId()), windows.GWLP_WNDPROC, self.wndproc)
-
-    def extrahandle(self, orig, hwnd, msg, wp, lp):
-        if msg == windows.WM_COMMAND:
-            func = self.callbacks.get(wp)
-            if func:
-                func(winsharedutils.html_get_select_text(self.browser))
-        return windows.WNDPROCTYPE(orig)(hwnd, msg, wp, lp)
-
     def __getcurrent(self):
-        _u = winsharedutils.html_get_current_url(self.browser)
-        if self.curr_url != _u:
-            self.curr_url = _u
-            self.on_load.emit(_u)
+        def __(_u):
+            if self.curr_url != _u:
+                self.curr_url = _u
+                self.on_load.emit(_u)
+
+        cb = winsharedutils.html_get_select_text_cb(__)
+        winsharedutils.html_get_current_url(self.browser, cb)
+
         if (
             windows.GetAsyncKeyState(windows.VK_CONTROL)
             and windows.GetAsyncKeyState(67)
             and winsharedutils.html_get_ie(self.browser) == windows.GetFocus()
         ):
-            winsharedutils.clipboard_set(
-                winsharedutils.html_get_select_text(self.browser)
-            )
+            cb = winsharedutils.html_get_select_text_cb(gobject.baseobject.clipboardhelper.setText.emit)
+            winsharedutils.html_get_select_text(self.browser, cb)
 
     def navigate(self, url):
         winsharedutils.html_navigate(self.browser, url)
@@ -1480,9 +1467,9 @@ class mshtmlWidget(abstractwebview):
         return self._parsehtml_codec(self._parsehtml_font(self._parsehtml_dark(html)))
 
     def add_menu(self, index, label, callback):
-        command = mshtmlWidget.CommandBase + len(self.callbacks)
-        self.callbacks[command] = callback
-        winsharedutils.html_add_menu(self.browser, index, command, label)
+        cb = winsharedutils.html_add_menu_cb(callback)
+        self.callbacks.append(cb)
+        winsharedutils.html_add_menu(self.browser, index, label, cb)
 
 
 class CustomKeySequenceEdit(QKeySequenceEdit):
@@ -1954,7 +1941,7 @@ class listediter(LDialog):
             self.hcmodel.removeRow(curr.row())
             self.internalrealname.pop(curr.row())
         elif action == copy:
-            winsharedutils.clipboard_set(self.hcmodel.itemFromIndex(curr).text())
+            gobject.baseobject.clipboardhelper.setText.emit(self.hcmodel.itemFromIndex(curr).text())
 
         elif action == up:
 
@@ -2440,8 +2427,6 @@ class statusbutton(QPushButton):
 
 
 class IconButton(QPushButton):
-    clicked = pyqtSignal()
-
     def sizeHint(self):
         return QSize(
             int(1.42 * globalconfig["buttonsize2"]),
@@ -2450,7 +2435,6 @@ class IconButton(QPushButton):
 
     def __init__(self, icon, enable=True, qicon=None, parent=None):
         super().__init__(parent)
-        super().clicked.connect(self.clicked)
         self._icon = icon
         self._qicon = qicon
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)

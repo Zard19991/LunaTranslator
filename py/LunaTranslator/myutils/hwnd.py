@@ -6,19 +6,6 @@ import os, subprocess, functools
 import time, winrtutils, winsharedutils, hashlib
 from myutils.config import savehook_new_data, globalconfig
 from myutils.wrapper import threader
-from myutils.utils import qimage2binary
-
-
-def clipboard_set_image(p: QImage):
-    if not p:
-        return
-    if isinstance(p, str):
-        qimg = QImage()
-        qimg.load(p)
-        p = qimg
-    if p.isNull():
-        return
-    winsharedutils.clipboard_set_image(qimage2binary(p))
 
 
 @threader
@@ -59,7 +46,7 @@ def grabwindow(app="PNG", callback_origin=None, tocliponly=False):
         if p.isNull():
             return
         if tocliponly:
-            clipboard_set_image(p)
+            gobject.baseobject.clipboardhelper.setPixmap.emit(p)
             return
         p.save(fn)
         if callback_origin:
@@ -73,8 +60,7 @@ def grabwindow(app="PNG", callback_origin=None, tocliponly=False):
     if not hwnd:
         return
     hwnd = windows.GetAncestor(hwnd)
-    _ = windows.GetClientRect(hwnd)
-    p = gdi_screenshot(0, 0, _[2], _[3], hwnd)
+    p = gdi_screenshot(-1, -1, -1, -1, hwnd)
     callback(p, fname + "_gdi." + app)
     isshit = (not callback_origin) and (not tocliponly)
     if p.isNull() or isshit:
@@ -125,7 +111,8 @@ def getpidexe(pid):
 
 
 def getcurrexe():
-    return getpidexe(os.getpid())
+    # getpidexe(os.getpid())谜之有人获取到的结果是None，无法理解，那就先回档吧。
+    return os.environ.get("LUNA_EXE_NAME", getpidexe(os.getpid()))
 
 
 def test_injectable_1(pid):
@@ -265,16 +252,7 @@ def safepixmap(bs):
     return pixmap
 
 
-def hwndratex(hwnd):
-    _dpi = windows.GetDpiForWindow(hwnd)
-    mdpi = winsharedutils.GetMonitorDpiScaling(hwnd)
-    return mdpi / _dpi
-
-
 def gdi_screenshot(x1, y1, x2, y2, hwnd=None):
-    if hwnd:
-        rate = hwndratex(hwnd)
-        x1, y1, x2, y2 = (int(_ / rate) for _ in (x1, y1, x2, y2))
     bs = winsharedutils.gdi_screenshot(x1, y1, x2, y2, hwnd)
     return safepixmap(bs)
 
